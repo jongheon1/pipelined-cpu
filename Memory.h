@@ -75,8 +75,40 @@ class Memory : public DigitalCircuit {
     }
 
     virtual void advanceCycle() {
-      /* FIXME */
+      std::uint32_t addr = _iAddress->to_ulong();
+
+      if (_iMemRead->test(0)) {
+        std::uint32_t value = 0;
+        if (_endianness == LittleEndian) {
+          value += (_memory[addr + 3].to_ulong()); value <<= 8;
+          value += (_memory[addr + 2].to_ulong()); value <<= 8;
+          value += (_memory[addr + 1].to_ulong()); value <<= 8;
+          value += (_memory[addr + 0].to_ulong());
+        } else { // _endianness == BigEndian
+          value += (_memory[addr + 0].to_ulong()); value <<= 8;
+          value += (_memory[addr + 1].to_ulong()); value <<= 8;
+          value += (_memory[addr + 2].to_ulong()); value <<= 8;
+          value += (_memory[addr + 3].to_ulong());
+        }
+        _oReadData->reset();
+        *_oReadData = value;
+      }
+      if (_iMemWrite->test(0)) {
+        std::uint32_t value = _iWriteData->to_ulong();
+        if (_endianness == LittleEndian) {
+          _memory[addr + 0] = (std::uint8_t)(value % 0x100); value >>= 8;
+          _memory[addr + 1] = (std::uint8_t)(value % 0x100); value >>= 8;
+          _memory[addr + 2] = (std::uint8_t)(value % 0x100); value >>= 8;
+          _memory[addr + 3] = (std::uint8_t)(value % 0x100);
+        } else { // _endianness == BigEndian
+          _memory[addr + 3] = (std::uint8_t)(value % 0x100); value >>= 8;
+          _memory[addr + 2] = (std::uint8_t)(value % 0x100); value >>= 8;
+          _memory[addr + 1] = (std::uint8_t)(value % 0x100); value >>= 8;
+          _memory[addr + 0] = (std::uint8_t)(value % 0x100);
+        }
+      }
     }
+    
 
     ~Memory() {
       delete[] _memory;
