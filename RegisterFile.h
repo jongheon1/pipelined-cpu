@@ -57,7 +57,28 @@ class RegisterFile : public DigitalCircuit {
     }
 
     virtual void advanceCycle() {
-      /* FIXME */
+      *_oReadData1 = _registers[_iReadRegister1->to_ulong()];
+      *_oReadData2 = _registers[_iReadRegister2->to_ulong()];
+
+      if (_iRegWrite->test(0)) {
+          std::uint32_t writeRegIndex = _iWriteRegister->to_ulong();
+          if (writeRegIndex != 0) {
+              _registers[writeRegIndex] = *_iWriteData;
+          }
+      }
+    }
+
+    virtual void read() {
+      *_oReadData1 = _registers[_iReadRegister1->to_ulong()];
+      *_oReadData2 = _registers[_iReadRegister2->to_ulong()];
+    }
+    virtual void write() {
+      if (_iRegWrite->test(0)) {
+          std::uint32_t writeRegIndex = _iWriteRegister->to_ulong();
+          if (writeRegIndex != 0) {
+              _registers[writeRegIndex] = *_iWriteData;
+          }
+      }
     }
 
   private:
