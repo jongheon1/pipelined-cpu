@@ -28,8 +28,51 @@ class Control : public DigitalCircuit {
     }
 
     virtual void advanceCycle() {
-      /* FIXME */
-    }
+          // Implement truth table
+          // Instruction    RegDst  ALUSrc  MemtoReg    RegWrite    MemRead MemWrite    Branch  ALUOp1  ALUOp0
+          // R-format         1       0        0           1         0        0         0       1       0
+          //   lw             0       1        1           1         1        0         0       0       0
+          //   sw             X       1        X           0         0        1         0       0       0
+          //  beq             X       0        X           0         0        0         1       0       1
+
+          _oRegDst->reset();
+          _oALUSrc->reset();
+          _oMemToReg->reset();
+          _oRegWrite->reset();
+          _oMemRead->reset();
+          _oMemWrite->reset();
+          _oBranch->reset();
+          _oALUOp->reset();        
+
+          std::bitset<6> opcode = *_iOpcode;
+
+        switch (opcode.to_ulong()) {
+            case 0b000000:  // R-format (add, sub, and, or, nor, slt)
+                _oRegDst->set();
+                _oRegWrite->set();
+                _oALUOp->set(1);
+                break;
+            case 0b100011:  // lw
+                _oALUSrc->set();
+                _oMemToReg->set();
+                _oRegWrite->set();
+                _oMemRead->set();
+                break;
+            case 0b101011:  // sw
+                _oALUSrc->set();
+                _oMemWrite->set();
+                break;
+            case 0b000100:  // beq
+                _oBranch->set();
+                _oALUOp->set(0);
+                break;
+            case 0b001000:  // addi
+                _oALUSrc->set();
+                _oRegWrite->set();
+                break;
+        }
+      }
+    
 
   private:
 
