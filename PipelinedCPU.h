@@ -35,7 +35,18 @@ class ForwardingUnit : public DigitalCircuit {
       _oForwardB = oForwardB;
     }
     virtual void advanceCycle() {
-      /* FIXME */
+      *_oForwardA = 0;
+      if (_iEXMEMRegWrite->any() && _iEXMEMRegDstIdx->any() && *_iEXMEMRegDstIdx == *_iIDEXRs) {
+        *_oForwardA = 1;
+      } else if (_iMEMWBRegWrite->any() && _iMEMWBRegDstIdx->any() && *_iMEMWBRegDstIdx == *_iIDEXRs) {
+        *_oForwardA = 2;
+      }
+      *_oForwardB = 0;
+      if (_iEXMEMRegWrite->any() && _iEXMEMRegDstIdx->any() && *_iEXMEMRegDstIdx == *_iIDEXRt) {
+        *_oForwardB = 1;
+      } else if (_iMEMWBRegWrite->any() && _iMEMWBRegDstIdx->any() && *_iMEMWBRegDstIdx == *_iIDEXRt) {
+        *_oForwardB = 2;
+      }
     }
   private:
     const Wire<5> *_iIDEXRs;
@@ -48,40 +59,6 @@ class ForwardingUnit : public DigitalCircuit {
     Wire<2> *_oForwardB;
 };
 
-#ifdef ENABLE_HAZARD_DETECTION
-class HazardDetectionUnit : public DigitalCircuit {
-  public:
-    HazardDetectionUnit(
-      const std::string &name,
-      const Wire<5> *iIFIDRs,
-      const Wire<5> *iIFIDRt,
-      const Wire<1> *iIDEXMemRead,
-      const Wire<5> *iIDEXRt,
-      Wire<1> *oPCWrite,
-      Wire<1> *oIFIDWrite,
-      Wire<1> *oIDEXCtrlWrite
-    ) : DigitalCircuit(name) {
-      _iIFIDRs = iIFIDRs;
-      _iIFIDRt = iIFIDRt;
-      _iIDEXMemRead = iIDEXMemRead;
-      _iIDEXRt = iIDEXRt;
-      _oPCWrite = oPCWrite;
-      _oIFIDWrite = oIFIDWrite;
-      _oIDEXCtrlWrite = oIDEXCtrlWrite;
-    }
-    virtual void advanceCycle() {
-      /* FIXME */
-    }
-  private:
-    const Wire<5> *_iIFIDRs;
-    const Wire<5> *_iIFIDRt;
-    const Wire<1> *_iIDEXMemRead;
-    const Wire<5> *_iIDEXRt;
-    Wire<1> *_oPCWrite;
-    Wire<1> *_oIFIDWrite;
-    Wire<1> *_oIDEXCtrlWrite;
-};
-#endif // ENABLE_HAZARD_DETECTION
 #endif // ENABLE_DATA_FORWARDING
 
 class PipelinedCPU : public DigitalCircuit {
@@ -96,13 +73,107 @@ class PipelinedCPU : public DigitalCircuit {
       const char *instMemFileName,
       const char *dataMemFileName
     ) : DigitalCircuit(name) {
-      /* FIXME */
+      
+      // IF stage
+      _PC = initialPC;
+      _pcPlus4 = _PC.to_ulong() + 4;
+      _adderPCPlus4Input1 = 4;
+      _adderPCPlus4 = new Adder<32>("adderPCPlus4", &_PC, &_adderPCPlus4Input1, &_pcPlus4);
+      _instMemory = new Memory("Instruction Memory", &_PC, nullptr, &_alwaysHi, &_alwaysLo, &_latchIFID.instruction, memoryEndianness, instMemFileName);
+
+      // ID stage
+      _control = new Control(&_opcode, &_latchIDEX.ctrlEX.regDst, &_latchIDEX.ctrlEX.aluSrc, &_latchIDEX.ctrlWB.memToReg, &_latchIDEX.ctrlWB.regWrite, &_latchIDEX.ctrlMEM.memRead, &_latchIDEX.ctrlMEM.memWrite, &_latchIDEX.ctrlMEM.branch, &_latchIDEX.ctrlEX.aluOp);
+      _registerFile = new RegisterFile(&_regFileReadRegister1, &_regFileReadRegister2, &_latchMEMWB.regDstIdx, &_muxMemToRegOutput, &_latchMEMWB.ctrlWB.regWrite, &_latchIDEX.regFileReadData1, &_latchIDEX.regFileReadData2, regFileName);
+      _signExtend = new SignExtend<16, 32>("signExtend", &_signExtendInput, &_latchIDEX.signExtImmediate);
+
+      // EX stage
+      _adderBranchTargetAddr = new Adder<32>("adderBranchTargetAddr", &_latchIDEX.pcPlus4, &_adderBranchTargetAddrInput1, &_latchEXMEM.branchTargetAddr);
+#ifdef ENABLE_DATA_FORWARDING
+      _muxALUSrc = new MUX2<32>("muxALUSrc", &_muxForwardBOutput, &_latchIDEX.signExtImmediate, &_latchIDEX.ctrlEX.aluSrc, &_muxALUSrcOutput);
+      _alu = new ALU(&_aluControlOutput, &_muxForwardAOutput, &_muxALUSrcOutput, &_latchEXMEM.aluResult, &_latchEXMEM.aluZero);
+#else
+      _muxALUSrc = new MUX2<32>("muxALUSrc", &_latchIDEX.regFileReadData2, &_latchIDEX.signExtImmediate, &_latchIDEX.ctrlEX.aluSrc, &_muxALUSrcOutput);
+      _alu = new ALU(&_aluControlOutput, &_latchIDEX.regFileReadData1, &_muxALUSrcOutput, &_latchEXMEM.aluResult, &_latchEXMEM.aluZero);
+#endif
+      _aluControl = new ALUControl(&_latchIDEX.ctrlEX.aluOp, &_aluControlInput, &_aluControlOutput);
+      _muxRegDst = new MUX2<5>("muxRegDst", &_latchIDEX.rt, &_latchIDEX.rd, &_latchIDEX.ctrlEX.regDst, &_latchEXMEM.regDstIdx);
+
+      // MEM stage
+      _muxPCSrc = new MUX2<32>("muxPCSrc", &_pcPlus4, &_latchEXMEM.branchTargetAddr, &_muxPCSrcSelect, &_PC);
+      _dataMemory = new Memory("Data Memory", &_latchEXMEM.aluResult, &_latchEXMEM.regFileReadData2, &_latchEXMEM.ctrlMEM.memRead, &_latchEXMEM.ctrlMEM.memWrite, &_latchMEMWB.dataMemReadData, memoryEndianness, dataMemFileName);
+
+      // WB stage
+      _muxMemToReg = new MUX2<32>("muxMemToReg", &_latchMEMWB.aluResult, &_latchMEMWB.dataMemReadData, &_latchMEMWB.ctrlWB.memToReg, &_muxMemToRegOutput);
+
+#ifdef ENABLE_DATA_FORWARDING
+      _forwardingUnit = new ForwardingUnit("ForwardingUnit", &_latchIDEX.rs, &_latchIDEX.rt, &_latchEXMEM.ctrlWB.regWrite, &_latchEXMEM.regDstIdx, &_latchMEMWB.ctrlWB.regWrite, &_latchMEMWB.regDstIdx, &_forwardA, &_forwardB);
+      _muxForwardA = new MUX3<32>("muxForwardA", &_latchIDEX.regFileReadData1, &_latchEXMEM.aluResult, &_muxMemToRegOutput, &_forwardA, &_muxForwardAOutput);
+      _muxForwardB = new MUX3<32>("muxForwardB", &_latchIDEX.regFileReadData2, &_latchEXMEM.aluResult, &_muxMemToRegOutput, &_forwardB, &_muxForwardBOutput);
+
+
+#endif
     }
 
     virtual void advanceCycle() {
       _currCycle += 1;
 
-      /* FIXME: implement the per-cycle behavior of the five-stage pipelined MIPS CPU */
+      // WB stage
+      _muxMemToReg->advanceCycle();
+      _registerFile->write();
+      
+#ifdef ENABLE_DATA_FORWARDING
+      _forwardingUnit->advanceCycle();
+      _muxForwardA->advanceCycle();
+      _muxForwardB->advanceCycle();
+#endif
+
+      // MEM stage
+      _muxPCSrcSelect = _latchEXMEM.ctrlMEM.branch & _latchEXMEM.aluZero;
+      _muxPCSrc->advanceCycle();
+      _dataMemory->advanceCycle();
+      _latchMEMWB.ctrlWB = _latchEXMEM.ctrlWB;
+      _latchMEMWB.aluResult = _latchEXMEM.aluResult;
+      _latchMEMWB.regDstIdx = _latchEXMEM.regDstIdx;
+      
+      // EX stage
+      _adderBranchTargetAddrInput1 = _latchIDEX.signExtImmediate.to_ulong() << 2;
+      _adderBranchTargetAddr->advanceCycle();
+
+      _muxALUSrc->advanceCycle();
+      _aluControlInput = _latchIDEX.signExtImmediate.to_ulong() & 0x3F;
+      _aluControl->advanceCycle();
+
+
+      _alu->advanceCycle();
+      _muxRegDst->advanceCycle();
+      _latchEXMEM.ctrlWB = _latchIDEX.ctrlWB;
+      _latchEXMEM.ctrlMEM = _latchIDEX.ctrlMEM;
+      _latchEXMEM.regFileReadData2 = _latchIDEX.regFileReadData2;
+#ifdef ENABLE_DATA_FORWARDING
+      _latchEXMEM.regFileReadData2 = _muxForwardBOutput;
+#endif
+
+      // ID stage
+      _opcode = _latchIFID.instruction.to_ulong() >> 26;
+      _control->advanceCycle();
+      _regFileReadRegister1 = (_latchIFID.instruction.to_ulong() >> 21) & 0x1F;
+      _regFileReadRegister2 = (_latchIFID.instruction.to_ulong() >> 16) & 0x1F;
+      _registerFile->read();
+      _signExtendInput = _latchIFID.instruction.to_ulong() & 0xFFFF;
+      _signExtend->advanceCycle();
+
+      _latchIDEX.pcPlus4 = _latchIFID.pcPlus4;
+      _latchIDEX.rt = (_latchIFID.instruction.to_ulong() >> 16) & 0x1F;
+      _latchIDEX.rd = (_latchIFID.instruction.to_ulong() >> 11) & 0x1F;
+#ifdef ENABLE_DATA_FORWARDING
+      _latchIDEX.rs = (_latchIFID.instruction.to_ulong() >> 21) & 0x1F;
+#endif
+      
+      // IF stage
+      _instMemory->advanceCycle();
+      _adderPCPlus4->advanceCycle();
+      _latchIFID.pcPlus4 = _pcPlus4;
+      
     }
 
     ~PipelinedCPU() {
@@ -142,28 +213,29 @@ class PipelinedCPU : public DigitalCircuit {
     Register<32> _PC; // the Program Counter (PC) register
     Adder<32> *_adderPCPlus4; // the 32-bit adder in the IF stage
     Memory *_instMemory; // the instruction memory
+
     // Components for the ID stage
     Control *_control; // the Control unit
     RegisterFile *_registerFile; // the Register File
     SignExtend<16, 32> *_signExtend; // the sign-extend unit
+
     // Components for the EX stage
     Adder<32> *_adderBranchTargetAddr; // the 32-bit adder in the EX stage
     MUX2<32> *_muxALUSrc; // the MUX whose control signal is 'ALUSrc'
     ALUControl *_aluControl; // the ALU Control unit
     ALU *_alu; // the ALU
     MUX2<5> *_muxRegDst; // the MUX whose control signal is 'RegDst'
+
     // Components for the MEM stage
     MUX2<32> *_muxPCSrc; // the MUX whose control signal is 'PCSrc'
     Memory *_dataMemory; // the data memory
+
     // Components for the WB stage
     MUX2<32> *_muxMemToReg; // the MUX whose control signal is 'MemToReg'
 #ifdef ENABLE_DATA_FORWARDING
     ForwardingUnit *_forwardingUnit; // the forwarding unit
     MUX3<32> *_muxForwardA; // the 3-to-1 MUX whose control signal is 'forwardA'
     MUX3<32> *_muxForwardB; // the 3-to-1 MUX whose control signal is 'forwardB'
-#ifdef ENABLE_HAZARD_DETECTION
-    HazardDetectionUnit *_hazDetUnit; // the Hazard Detection unit
-#endif
 #endif
 
     // Latches
@@ -181,10 +253,12 @@ class PipelinedCPU : public DigitalCircuit {
       Register<1> memToReg;
       Register<1> regWrite;
     } ControlWB_t; // the control signals for the WB stage
+
     struct {
       Register<32> pcPlus4; // PC+4
       Register<32> instruction; // 32-bit instruction
     } _latchIFID = {}; // the IF-ID latch
+
     struct {
       ControlWB_t ctrlWB; // the control signals for the WB stage
       ControlMEM_t ctrlMEM; // the control signals for the MEM stage
@@ -199,6 +273,7 @@ class PipelinedCPU : public DigitalCircuit {
       Register<5> rt; // the 5-bit 'rt' field
       Register<5> rd; // the 5-bit 'rd' field
     } _latchIDEX = {}; // the ID-EX latch
+
     struct {
       ControlWB_t ctrlWB; // the control signals for the WB stage
       ControlMEM_t ctrlMEM; // the control signals for the MEM stage
@@ -208,6 +283,7 @@ class PipelinedCPU : public DigitalCircuit {
       Register<32> regFileReadData2; // 'ReadData2' from the register file
       Register<5> regDstIdx; // the index of the destination register
     } _latchEXMEM = {}; // the EX-MEM latch
+
     struct {
       ControlWB_t ctrlWB; // the control signals for the WB stage
       Register<32> dataMemReadData; // the 32-bit data read from the data memory
@@ -232,10 +308,6 @@ class PipelinedCPU : public DigitalCircuit {
     Wire<2> _forwardA, _forwardB; // the outputs from the Forwarding unit
     Wire<32> _muxForwardAOutput; // the output of the 3-to-1 MUX whose control signal is 'forwardA'
     Wire<32> _muxForwardBOutput; // the output of the 3-to-1 MUX whose control signal is 'forwardB'
-#ifdef ENABLE_HAZARD_DETECTION
-    Wire<5> _hazDetIFIDRs, _hazDetIFIDRt; // the inputs to the Hazard Detection unit
-    Wire<1> _hazDetPCWrite, _hazDetIFIDWrite, _hazDetIDEXCtrlWrite; // the outputs of the Hazard Detection unit
-#endif
 #endif
 
   public:
