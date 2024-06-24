@@ -22,7 +22,52 @@ class ALU : public DigitalCircuit {
     }
 
     virtual void advanceCycle() {
-      /* FIXME */
+      // 0b0000: AND
+      // 0b0001: OR
+      // 0b0010: ADD
+      // 0b0110: SUB
+      // 0b0111: SLT
+      // 0b1100: NOR
+      // set _oOutput and _oZero
+      // set _oZero to 1 if the output is zero
+      _oOutput->reset();
+      _oZero->reset();
+      switch (_iALUControl->to_ulong())
+      {
+      case 0b0000:
+        *_oOutput = (*_iInput0) & (*_iInput1);
+        if (_oOutput->none()) 
+          _oZero->set();
+        break;
+      case 0b0001:
+        *_oOutput = (*_iInput0) | (*_iInput1);
+        if (_oOutput->none()) 
+          _oZero->set();
+        break;
+      case 0b0010:
+        *_oOutput = _iInput0->to_ulong() + _iInput1->to_ulong();
+        if (_oOutput->none()) 
+          _oZero->set();
+        break;
+      case 0b0110:
+        *_oOutput = _iInput0->to_ulong() - _iInput1->to_ulong();
+        if (_oOutput->none()) 
+          _oZero->set();
+        break;
+      case 0b0111:
+        *_oOutput = _iInput0->to_ulong() < _iInput1->to_ulong() ? 1 : 0;
+        if (_oOutput->none()) 
+          _oZero->set();
+        break;
+      case 0b1100:
+        *_oOutput = ~((*_iInput0) | (*_iInput1));
+        if (_oOutput->none()) 
+          _oZero->set();
+        break;
+      default:
+        assert(false);
+      }
+
     }
 
   private:
